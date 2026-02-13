@@ -1,67 +1,100 @@
+import os
 import json
 import joblib
 import pandas as pd
 
-from pathlib import Path
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 
-# ------------------ CONFIG ------------------
-MODEL_NAME = "Random Forest (150, depth=15, Stratified)"
-DATA_PATH = "dataset/winequality-red.csv"
 
 # ------------------ LOAD DATA ------------------
-data = pd.read_csv(DATA_PATH, sep=";")
+DATA_PATH = "dataset/winequality-red.csv"
+df = pd.read_csv(DATA_PATH, sep=";")
 
-X = data.drop("quality", axis=1)
-y = data["quality"]
+X = df.drop("quality", axis=1)
+y = df["quality"]
 
-# Create bins for stratified regression split
-y_bins = pd.qcut(y, q=5, labels=False, duplicates="drop")
 
 # ------------------ TRAIN-TEST SPLIT ------------------
 X_train, X_test, y_train, y_test = train_test_split(
     X,
     y,
-    test_size=0.25,
-    stratify=y_bins,
+    test_size=0.3,
     random_state=42
 )
 
-# ------------------ MODEL ------------------
-model = RandomForestRegressor(
-    n_estimators=150,
-    max_depth=15,
+
+# ------------------ BASE MODEL ------------------
+base_model = XGBRegressor(
+    objective="reg:squarederror",
     random_state=42,
-    n_jobs=-1
+    n_jobs=-1,
+    verbosity=0
 )
 
-model.fit(X_train, y_train)
 
-# ------------------ EVALUATION ------------------
+# ------------------ HYPERPARAMETER SEARCH SPACE ------------------
+param_dist = {
+    "n_estimators": [400, 600, 800],
+    "max_depth": [6, 7, 8],
+    "learning_rate": [0.03, 0.05, 0.1],
+    "subsample": [0.8, 0.9, 1.0],
+    "colsample_bytree": [0.8, 0.9, 1.0],
+    "min_child_weight": [1, 2, 3]
+}
+
+
+# ------------------ RANDOMIZED SEARCH ------------------
+search = RandomizedSearchCV(
+    estimator=base_model,
+    param_distributions=param_dist,
+    n_iter=25,
+    scoring="r2",
+    cv=3,
+    random_state=42,
+    n_jobs=-1,
+    verbose=1
+)
+
+search.fit(X_train, y_train)
+
+# ------------------ BEST MODEL ------------------
+model = search.best_estimator_
+
+
+# ------------------ PREDICTION ------------------
 y_pred = model.predict(X_test)
 
+
+# ------------------ METRICS ------------------
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
 
-# ------------------ SAVE MODEL (ROOT for GitHub Artifact) ------------------
-joblib.dump(model, "model.pkl")
 
-# ------------------ SAVE METRICS (For CI Gate) ------------------
+# ------------------ CREATE ARTIFACT DIRECTORY ------------------
+os.makedirs("app/artifacts", exist_ok=True)
+
+
+# ------------------ SAVE MODEL ------------------
+joblib.dump(model, "app/artifacts/model.pkl")
+
+
+# ------------------ SAVE METRICS ------------------
 metrics = {
-    "model_name": MODEL_NAME,
     "r2": float(r2),
-    "mse": float(mse)
+    "mse": float(mse),
+    "best_params": search.best_params_
 }
 
-with open("metrics.json", "w") as f:
+with open("app/artifacts/metrics.json", "w") as f:
     json.dump(metrics, f, indent=4)
 
+
 # ------------------ LOGS ------------------
-print("\n===== RANDOM FOREST STRATIFIED RUN =====")
-print(f"Model: {MODEL_NAME}")
-print(f"R2 Score: {r2}")
-print(f"MSE: {mse}")
-print("Model saved as model.pkl")
-print("Metrics saved as metrics.json")
+print("\n===== XGBOOST + R² HYPERPARAMETER TUNING RUN =====")
+print(f"Best parameters found: {search.best_params_}")
+print(f"Final R2 Score: {r2}")
+print(f"Final MSE: {mse}")
+print("Model saved as app/artifacts/model.pkl")
+print("Metrics saved as app/artifacts/metrics.json")
