@@ -61,11 +61,17 @@ pipeline {
         stage('Run Container & Test (curl)') {
             steps {
                 sh """
-                docker run -d -p 5000:5000 --name wine-test ${DOCKER_REPO}:${BUILD_NUMBER}
-                sleep 10
-                curl http://localhost:5000/
-                docker stop wine-test
-                docker rm wine-test
+                    
+                    docker rm -f wine-test || true
+                    
+                    docker run -d -p 5000:5000 --name wine-test ${DOCKER_REPO}:${BUILD_NUMBER}
+                    
+                    sleep 10
+                    
+                    curl http://localhost:5000/
+                    
+                    docker stop wine-test
+                    docker rm wine-test
                 """
             }
         }
