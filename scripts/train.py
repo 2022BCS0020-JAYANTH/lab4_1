@@ -2,10 +2,9 @@ import json
 import joblib
 import pandas as pd
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
-from lightgbm import LGBMRegressor
-
+from xgboost import XGBRegressor
 
 # ------------------ LOAD DATA ------------------
 DATA_PATH = "dataset/winequality-red.csv"
@@ -15,50 +14,72 @@ df = pd.read_csv(DATA_PATH, sep=";")
 X = df.drop("quality", axis=1)
 y = df["quality"]
 
-
 # ------------------ TRAIN-TEST SPLIT ------------------
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.3, random_state=42
+    X,
+    y,
+    test_size=0.3,
+    random_state=42
 )
 
-
-# ------------------ LIGHTGBM MODEL ------------------
-model = LGBMRegressor(
-    n_estimators=500,
-    learning_rate=0.05,
-    num_leaves=31,
-    max_depth=-1,
-    subsample=0.8,
-    colsample_bytree=0.8,
+# ------------------ BASE XGBOOST MODEL ------------------
+base_model = XGBRegressor(
+    objective="reg:squarederror",
     random_state=42,
-    n_jobs=-1
+    n_jobs=-1,
+    verbosity=0
 )
 
-model.fit(X_train, y_train)
+# ------------------ HYPERPARAMETER SEARCH SPACE ------------------
+param_dist = {
+    "n_estimators": [400, 600, 800],
+    "max_depth": [6, 7, 8],
+    "learning_rate": [0.03, 0.05, 0.1],
+    "subsample": [0.8, 0.9, 1.0],
+    "colsample_bytree": [0.8, 0.9, 1.0],
+    "min_child_weight": [1, 2, 3]
+}
 
+# ------------------ RANDOMIZED SEARCH ------------------
+search = RandomizedSearchCV(
+    estimator=base_model,
+    param_distributions=param_dist,
+    n_iter=25,
+    scoring="r2",
+    cv=3,
+    random_state=42,
+    n_jobs=-1,
+    verbose=1
+)
 
-# ------------------ PREDICTION ------------------
+search.fit(X_train, y_train)
+
+# ------------------ BEST MODEL ------------------
+model = search.best_estimator_
+
+# ------------------ EVALUATION ------------------
 y_pred = model.predict(X_test)
 
-
-# ------------------ METRICS ------------------
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
 
+# ------------------ SAVE MODEL ------------------
+joblib.dump(model, "model.pkl")
+
+# ------------------ SAVE METRICS ------------------
 metrics = {
     "r2": float(r2),
-    "mse": float(mse)
+    "mse": float(mse),
+    "best_params": search.best_params_
 }
 
 with open("metrics.json", "w") as f:
     json.dump(metrics, f, indent=4)
 
-
-# ------------------ SAVE MODEL ------------------
-joblib.dump(model, "model.pkl")
-
-
 # ------------------ LOGS ------------------
-print("LIGHTGBM TRAINING RUN")
-print(f"R2 Score: {r2}")
-print(f"MSE: {mse}")
+print("\n===== XGBOOST + R² HYPERPARAMETER TUNING RUN =====")
+print(f"Best parameters found: {search.best_params_}")
+print(f"Final R2 Score: {r2}")
+print(f"Final MSE: {mse}")
+print("Model saved as model.pkl")
+print("Metrics saved as metrics.json")
