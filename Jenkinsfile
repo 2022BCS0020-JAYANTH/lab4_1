@@ -62,16 +62,9 @@ pipeline {
             steps {
                 sh """
                     docker rm -f wine-test || true
-                    docker run -d -p 5000:5000 --name wine-test ${DOCKER_REPO}:${BUILD_NUMBER}
+                    docker run -d -p 5000:5000 --name wine-test --network bridge ${DOCKER_REPO}:${BUILD_NUMBER}
                     sleep 10
-                    
-                    echo "--- CONTAINER STATUS ---"
-                    docker ps -a
-                    
-                    echo "--- CONTAINER LOGS ---"
-                    docker logs wine-test  # <--- THIS WILL TELL YOU THE EXACT PYTHON ERROR
-                    
-                    curl http://localhost:5000/
+                    curl http://wine-test:5000/ || curl http://172.17.0.1:5000/
                 """
             }
         }
