@@ -5,9 +5,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY model.pkl .
+COPY app/artifacts/model.pkl .
+
 COPY app.py .
 
-EXPOSE 8000
+EXPOSE 5000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "app.py"]
