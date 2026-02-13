@@ -1,0 +1,105 @@
+name: Train and Deploy Model
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train model
+        run: |
+          python scripts/train.py
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            model.pkl
+            metrics.json
+
+  deploy:
+    needs: train
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts
+
+      - name: Read and compare metrics (HARD GATE)
+        id: compare
+        env:
+          BEST_R2: ${{ vars.BEST_R2 }}
+          BEST_MSE: ${{ vars.BEST_MSE }}
+        run: |
+          python - <<'EOF'
+          import json, sys, os
+
+          with open("metrics.json") as f:
+              m = json.load(f)
+
+          cr2 = float(m["r2"])
+          cmse = float(m["mse"])
+
+          br2 = float(os.getenv("BEST_R2", "-9999"))
+          bmse = float(os.getenv("BEST_MSE", "999999"))
+
+          print(f"Current R2: {cr2}")
+          print(f"Current MSE: {cmse}")
+          print(f"Best R2: {br2}")
+          print(f"Best MSE: {bmse}")
+
+          if not (cr2 > br2 and cmse < bmse):
+              print("2022BCS0020 ---- Metric did not improve")
+              sys.exit(1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"deploy=true\n")
+              f.write(f"current_r2={cr2}\n")
+              f.write(f"current_mse={cmse}\n")
+          EOF
+
+      - name: Docker login
+        if: steps.compare.outputs.deploy == 'true'
+        run: |
+          echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        if: steps.compare.outputs.deploy == 'true'
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/wine-inference:latest .
+
+      - name: Push Docker image
+        if: steps.compare.outputs.deploy == 'true'
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/wine-inference:latest
+
+      - name: Update best metrics
+        if: steps.compare.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          gh variable set BEST_R2 --body "${{ steps.compare.outputs.current_r2 }}"
+          gh variable set BEST_MSE --body "${{ steps.compare.outputs.current_mse }}"
