@@ -3,8 +3,8 @@ import joblib
 import pandas as pd
 
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, f1_score, r2_score
+from sklearn.metrics import mean_squared_error, r2_score
+from lightgbm import LGBMRegressor
 
 
 # ------------------ LOAD DATA ------------------
@@ -18,12 +18,22 @@ y = df["quality"]
 
 # ------------------ TRAIN-TEST SPLIT ------------------
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
+    X, y, test_size=0.3, random_state=42
 )
 
 
-# ------------------ MODEL ------------------
-model = LinearRegression()
+# ------------------ LIGHTGBM MODEL ------------------
+model = LGBMRegressor(
+    n_estimators=500,
+    learning_rate=0.05,
+    num_leaves=31,
+    max_depth=-1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=42,
+    n_jobs=-1
+)
+
 model.fit(X_train, y_train)
 
 
@@ -32,36 +42,23 @@ y_pred = model.predict(X_test)
 
 
 # ------------------ METRICS ------------------
-
-# Regression metrics
 mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
 
-# Convert regression output to binary classification for F1
-# Good wine: quality >= 6
-y_test_bin = (y_test >= 6).astype(int)
-y_pred_bin = (y_pred >= 6).astype(int)
-
-f1 = f1_score(y_test_bin, y_pred_bin)
-
-
-# ------------------ SAVE MODEL ------------------
-joblib.dump(model, "model.pkl")
-
-
-# ------------------ SAVE METRICS ------------------
 metrics = {
     "r2": float(r2),
-    "mse": float(mse),
-    "f1": float(f1)
+    "mse": float(mse)
 }
 
 with open("metrics.json", "w") as f:
     json.dump(metrics, f, indent=4)
 
 
+# ------------------ SAVE MODEL ------------------
+joblib.dump(model, "model.pkl")
+
+
 # ------------------ LOGS ------------------
-print("Training complete")
+print("LIGHTGBM TRAINING RUN")
 print(f"R2 Score: {r2}")
 print(f"MSE: {mse}")
-print(f"F1 Score: {f1}")
