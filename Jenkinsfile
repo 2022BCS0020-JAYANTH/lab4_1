@@ -61,17 +61,17 @@ pipeline {
         stage('Run Container & Test (curl)') {
             steps {
                 sh """
-                    
                     docker rm -f wine-test || true
-                    
                     docker run -d -p 5000:5000 --name wine-test ${DOCKER_REPO}:${BUILD_NUMBER}
-                    
                     sleep 10
                     
-                    curl http://localhost:5000/
+                    echo "--- CONTAINER STATUS ---"
+                    docker ps -a
                     
-                    docker stop wine-test
-                    docker rm wine-test
+                    echo "--- CONTAINER LOGS ---"
+                    docker logs wine-test  # <--- THIS WILL TELL YOU THE EXACT PYTHON ERROR
+                    
+                    curl http://localhost:5000/
                 """
             }
         }
