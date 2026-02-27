@@ -1,0 +1,131 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "jayanthbcs20/wine-inference:latest"
+        CONTAINER_NAME = "wine-validation"
+        PORT = "5000"
+    }
+
+    stages {
+
+        stage('Pull Image') {
+            steps {
+                echo "Pulling Docker image..."
+                sh 'docker pull $IMAGE_NAME'
+            }
+        }
+
+        stage('Run Container') {
+            steps {
+                echo "Starting container..."
+                sh '''
+                docker run -d -p 5000:5000 --name $CONTAINER_NAME $IMAGE_NAME
+                '''
+            }
+        }
+
+        stage('Wait for Service Readiness') {
+            steps {
+                script {
+                    echo "Checking if API is ready..."
+
+                    def retries = 10
+                    def ready = false
+
+                    for (int i = 0; i < retries; i++) {
+                        def status = sh(
+                            script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ || true",
+                            returnStdout: true
+                        ).trim()
+
+                        if (status == "200") {
+                            echo "API is ready!"
+                            ready = true
+                            break
+                        }
+
+                        sleep 5
+                    }
+
+                    if (!ready) {
+                        error("API did not start within timeout")
+                    }
+                }
+            }
+        }
+
+        stage('Send Valid Inference Request') {
+            steps {
+                script {
+
+                    echo "Sending valid inference request..."
+
+                    def response = sh(
+                        script: "curl -s -X POST http://localhost:5000/predict -H 'Content-Type: application/json' -d @tests/valid.json",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Valid API Response: ${response}"
+
+                    if (!response.contains("wine_quality")) {
+                        error("wine_quality field missing in response")
+                    }
+
+                    def numericCheck = response.replaceAll('[^0-9]', '')
+
+                    if (!numericCheck.isNumber()) {
+                        error("wine_quality is not numeric")
+                    }
+
+                    echo "Valid inference test PASSED"
+                }
+            }
+        }
+
+        stage('Send Invalid Request') {
+            steps {
+                script {
+
+                    echo "Sending invalid inference request..."
+
+                    def status = sh(
+                        script: "curl -s -o invalid_response.txt -w '%{http_code}' -X POST http://localhost:5000/predict -H 'Content-Type: application/json' -d @tests/invalid.json",
+                        returnStdout: true
+                    ).trim()
+
+                    def invalidResponse = readFile('invalid_response.txt')
+                    echo "Invalid API Response: ${invalidResponse}"
+
+                    if (status == "200") {
+                        error("Invalid request incorrectly returned 200 OK")
+                    }
+
+                    echo "Invalid inference test PASSED"
+                }
+            }
+        }
+
+        stage('Stop Container') {
+            steps {
+                echo "Stopping container..."
+                sh '''
+                docker stop $CONTAINER_NAME || true
+                docker rm $CONTAINER_NAME || true
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "PIPELINE SUCCESS — All validations passed"
+        }
+        failure {
+            echo "PIPELINE FAILED — Validation error detected"
+        }
+        always {
+            sh 'docker rm -f $CONTAINER_NAME || true'
+        }
+    }
+}
