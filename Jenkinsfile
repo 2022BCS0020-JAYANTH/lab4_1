@@ -2,130 +2,103 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "jayanthbcs20/wine-inference:latest"
-        CONTAINER_NAME = "wine-validation"
-        PORT = "5000"
+        DOCKER_REPO = "jayanthbcs20/wine-inference"
+        VENV_DIR = "venv"
     }
 
     stages {
 
-        stage('Pull Image') {
+        stage('Checkout') {
             steps {
-                echo "Pulling Docker image..."
-                sh 'docker pull $IMAGE_NAME'
+                checkout scm
             }
         }
 
-        stage('Run Container') {
+        stage('Install Dependencies') {
             steps {
-                echo "Starting container..."
-                sh '''
-                docker run -d -p 5000:5000 --name $CONTAINER_NAME $IMAGE_NAME
-                '''
+                sh """
+                python3 -m venv ${VENV_DIR}
+                . ${VENV_DIR}/bin/activate
+                pip install --upgrade pip
+                pip install -r requirements.txt
+                """
             }
         }
 
-        stage('Wait for Service Readiness') {
+        stage('Train Model') {
+            steps {
+                sh """
+                . ${VENV_DIR}/bin/activate
+                python scripts/train.py
+                """
+            }
+        }
+
+        stage('Read Metrics') {
             steps {
                 script {
-                    echo "Checking if API is ready..."
+                    def metrics = readJSON file: 'app/artifacts/metrics.json'
 
-                    def retries = 10
-                    def ready = false
+                    env.CURRENT_R2 = metrics.r2.toString()
+                    env.CURRENT_MSE = metrics.mse.toString()
 
-                    for (int i = 0; i < retries; i++) {
-                        def status = sh(
-                            script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ || true",
-                            returnStdout: true
-                        ).trim()
-
-                        if (status == "200") {
-                            echo "API is ready!"
-                            ready = true
-                            break
-                        }
-
-                        sleep 5
-                    }
-
-                    if (!ready) {
-                        error("API did not start within timeout")
-                    }
+                    echo "MODEL METRICS"
+                    echo "2022BCS0020 - Jayanth"
+                    echo "R2  : ${env.CURRENT_R2}"
+                    echo "MSE : ${env.CURRENT_MSE}"
                 }
             }
         }
 
-        stage('Send Valid Inference Request') {
+        stage('Build Docker Image') {
             steps {
                 script {
-
-                    echo "Sending valid inference request..."
-
-                    def response = sh(
-                        script: "curl -s -X POST http://localhost:5000/predict -H 'Content-Type: application/json' -d @tests/valid.json",
-                        returnStdout: true
-                    ).trim()
-
-                    echo "Valid API Response: ${response}"
-
-                    if (!response.contains("wine_quality")) {
-                        error("wine_quality field missing in response")
-                    }
-
-                    def numericCheck = response.replaceAll('[^0-9]', '')
-
-                    if (!numericCheck.isNumber()) {
-                        error("wine_quality is not numeric")
-                    }
-
-                    echo "Valid inference test PASSED"
+                    docker.build("${DOCKER_REPO}:${BUILD_NUMBER}")
                 }
             }
         }
 
-        stage('Send Invalid Request') {
+        stage('Run Container & Test (curl)') {
             steps {
-                script {
-
-                    echo "Sending invalid inference request..."
-
-                    def status = sh(
-                        script: "curl -s -o invalid_response.txt -w '%{http_code}' -X POST http://localhost:5000/predict -H 'Content-Type: application/json' -d @tests/invalid.json",
-                        returnStdout: true
-                    ).trim()
-
-                    def invalidResponse = readFile('invalid_response.txt')
-                    echo "Invalid API Response: ${invalidResponse}"
-
-                    if (status == "200") {
-                        error("Invalid request incorrectly returned 200 OK")
-                    }
-
-                    echo "Invalid inference test PASSED"
-                }
+                sh """
+                    docker rm -f wine-test || true
+                    docker run -d -p 5000:5000 --name wine-test --network bridge ${DOCKER_REPO}:${BUILD_NUMBER}
+                    sleep 10
+                    curl http://wine-test:5000/ || curl http://172.17.0.1:5000/
+                """
             }
         }
 
-        stage('Stop Container') {
+        stage('Push Docker Image') {
             steps {
-                echo "Stopping container..."
-                sh '''
-                docker stop $CONTAINER_NAME || true
-                docker rm $CONTAINER_NAME || true
-                '''
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+
+                        sh """
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker tag ${DOCKER_REPO}:${BUILD_NUMBER} ${DOCKER_REPO}:latest
+                        docker push ${DOCKER_REPO}:${BUILD_NUMBER}
+                        docker push ${DOCKER_REPO}:latest
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
+        always {
+            archiveArtifacts artifacts: 'app/artifacts/**', fingerprint: true
+        }
         success {
-            echo "PIPELINE SUCCESS — All validations passed"
+            echo "Pipeline completed successfully"
         }
         failure {
-            echo "PIPELINE FAILED — Validation error detected"
-        }
-        always {
-            sh 'docker rm -f $CONTAINER_NAME || true'
+            echo "Pipeline failed"
         }
     }
 }
