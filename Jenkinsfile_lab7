@@ -35,7 +35,7 @@ pipeline {
 
                     for (int i = 0; i < retries; i++) {
                         def status = sh(
-                            script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ || true",
+                            script: "curl -s -o /dev/null -w '%{http_code}' http://host.docker.internal:5000/ || true",
                             returnStdout: true
                         ).trim()
 
@@ -62,7 +62,7 @@ pipeline {
                     echo "Sending valid inference request..."
 
                     def response = sh(
-                        script: "curl -s -X POST http://localhost:5000/predict -H 'Content-Type: application/json' -d @tests/valid.json",
+                        script: "curl -s -X POST http://host.docker.internal:5000/predict -H 'Content-Type: application/json' -d @tests/valid.json",
                         returnStdout: true
                     ).trim()
 
@@ -90,7 +90,7 @@ pipeline {
                     echo "Sending invalid inference request..."
 
                     def status = sh(
-                        script: "curl -s -o invalid_response.txt -w '%{http_code}' -X POST http://localhost:5000/predict -H 'Content-Type: application/json' -d @tests/invalid.json",
+                        script: "curl -s -o invalid_response.txt -w '%{http_code}' -X POST http://host.docker.internal:5000/predict -H 'Content-Type: application/json' -d @tests/invalid.json",
                         returnStdout: true
                     ).trim()
 
