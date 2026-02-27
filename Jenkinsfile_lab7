@@ -108,11 +108,27 @@ pipeline {
 
         stage('Stop Container') {
             steps {
-                echo "Stopping container..."
-                sh '''
-                docker stop $CONTAINER_NAME || true
-                docker rm $CONTAINER_NAME || true
-                '''
+                script {
+                    echo "Stopping container if running..."
+        
+                    sh '''
+                    docker stop $CONTAINER_NAME || true
+                    docker rm $CONTAINER_NAME || true
+                    '''
+        
+                    echo "Verifying no leftover container exists..."
+        
+                    def containerCheck = sh(
+                        script: "docker ps -a --filter name=$CONTAINER_NAME --format '{{.Names}}'",
+                        returnStdout: true
+                    ).trim()
+        
+                    if (containerCheck) {
+                        error("Container cleanup FAILED: $CONTAINER_NAME still exists")
+                    }
+        
+                    echo "Container successfully removed — No leftovers"
+                }
             }
         }
     }
